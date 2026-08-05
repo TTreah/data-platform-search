@@ -98,7 +98,9 @@ Hermes 生成 SQL 时必须遵守以下规则：
 2. **必须分页**：预期行数 > 200 时，必须分页。TOP 和 OFFSET 只能二选一，禁止同时使用：
    - 无需翻页 → `SELECT TOP N ...`
    - 需要翻页 → `OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`（不带 TOP）
-3. **参数绑定**：用户输入值必须通过 `params` 传参，禁止直接拼入 SQL 字符串
+3. **参数绑定**：占位符必须是 pymssql 的 `%(name)s` 格式，**绝对禁止** T-SQL 的 `@variable` 语法。传参方式：
+   - SQL 中用 `%(name)s` 占位 → `WHERE ItemId = %(item_id)s`
+   - 调用时 `params={"item_id": "0022AS000650"}`
 4. **禁止 DDL/DML**：仅允许 SELECT，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE
 
 ### 方言限制
