@@ -30,7 +30,7 @@ metadata:
 MCP Server（`data-platform`）只暴露一个 SQL 执行入口。所有查询——单表、联表、聚合、指标——全部通过此工具完成。Hermes 负责生成 SQL，MCP Server 只负责执行。
 
 ```
-工具名: mcp_data-platform_query
+工具名: mcp_data-platform
 入参:
   - sql: string (必填) — 完整 SQL 语句（SELECT only）
   - params: object (可选) — SQL 占位符参数绑定，键值对
@@ -43,139 +43,150 @@ MCP Server（`data-platform`）只暴露一个 SQL 执行入口。所有查询�
 
 ## 表结构 Schema
 
-Hermes 生成 SQL 时，务必以以下 schema 为准。
+Hermes 生成 SQL 时，务必以以下 schema 为准。数据库为 SQL Server，schema 为 `dbo`。
 
-### orders（订单表）
-
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | varchar(32) | PK | 订单ID |
-| customer_id | varchar(32) | FK → customers.id | 客户ID |
-| amount | decimal(12,2) | NOT NULL | 订单金额 |
-| status | varchar(20) | NOT NULL | pending / shipped / cancelled / refunded |
-| source | varchar(32) | - | 渠道：online / offline / app |
-| created_at | datetime | NOT NULL, INDEXED | 创建时间 |
-| updated_at | datetime | - | 最后更新时间 |
-| remark | text | - | 备注 |
-
-### customers（客户表）
+### DWD_InventSum_DH（库存汇总表 — 核心表）
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
-| id | varchar(32) | PK | 客户ID |
-| name | varchar(128) | NOT NULL | 客户名称 |
-| tier | varchar(10) | NOT NULL | 等级：vip / gold / silver / normal |
-| region | varchar(64) | - | 所属区域 |
-| contact_phone | varchar(20) | - | 联系电话（敏感字段） |
-| created_at | datetime | NOT NULL | 注册时间 |
+| DW_CreatedTime | datetime | NOT NULL | 数仓同步时间 |
+| DW_CreateDate | date | NOT NULL | 数仓同步日期 |
+| DW_IsDeleted | int | NOT NULL | 逻辑删除标记（0=有效） |
+| TransDate | date | NOT NULL | 业务交易日期 |
+| Year | int | - | 年 |
+| Month | int | - | 月 |
+| Day | int | - | 日 |
+| Week | int | - | 周次 |
+| ItemId | varchar | INDEXED | 物料编码 |
+| Trx_ItemClassId | varchar | - | 物料分类编码 |
+| VehicleComponentType | varchar | - | 整车零部件类型 |
+| Trx_ItemClassName | varchar | - | 物料分类名称 |
+| ProductName | varchar | - | 产品名称 |
+| InventDimId | varchar | - | 库存维度ID |
+| ConfigId | varchar | - | 配置ID |
+| InventColorId | varchar | - | 颜色ID |
+| InventLocationId | varchar | - | 仓库ID |
+| WMSLocationId | varchar | - | 库位ID |
+| InventBatchId | varchar | - | 批次ID |
+| DataAreaId | varchar | NOT NULL | 数据区域（公司代码），如 "nx" |
+| PhysicalInvent | decimal(18,6) | - | 实际库存数量 |
+| OnOrder | decimal(18,6) | - | 在途数量 |
+| Ordered | decimal(18,6) | - | 已订购数量 |
+| AvailOrdered | decimal(18,6) | - | 可用订购数量 |
+| AvailPhysical | decimal(18,6) | - | 可用实际数量 |
+| RecId | bigint | PK | 记录ID |
+| RecVersion | int | - | 记录版本号 |
+| Trx_Dept | varchar | - | 部门 |
+| Trx_Belong | varchar | - | 归属组织 |
+| PhysicalValue | decimal(18,6) | - | 实际库存金额 |
+| PostedValue | decimal(18,6) | - | 已过账金额 |
+| SumValue | decimal(18,6) | - | 汇总金额 |
 
-### metrics（指标表）
+### 已知表清单
 
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | bigint | PK AUTO_INCREMENT | 自增ID |
-| name | varchar(64) | NOT NULL, INDEXED | 指标名，如 sales_trend、order_volume |
-| value | decimal(14,4) | NOT NULL | 指标值 |
-| dimensions | json | - | 维度 KV，如 {"region":"华东","channel":"app"} |
-| timestamp | datetime | NOT NULL, INDEXED | 数据时间点 |
+以下为 DWD 数据库下已确认存在的表，Hermes 可根据查询意图选择：
 
-### 表关联关系
-
-```
-customers.id ──(1:N)──> orders.customer_id
-```
+| 表名 | 说明 |
+|------|------|
+| dbo.DWD_InventSum_DH | 库存汇总表 — 库存数量、金额、可用量 |
 
 ## SQL 生成规范
 
 Hermes 生成 SQL 时必须遵守以下规则：
 
 ### 安全规则（强制）
-1. **禁止全表扫描**：WHERE 子句必须包含索引字段（id、created_at、customer_id、name）
-2. **必须分页**：预期行数 > 200 时，必须加 `LIMIT {page_size} OFFSET {(page-1)*page_size}`
+1. **禁止全表扫描**：WHERE 子句必须包含索引字段（TransDate、ItemId、InventLocationId、DataAreaId）
+2. **必须分页**：预期行数 > 200 时，必须用 `OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`
 3. **参数绑定**：用户输入值必须通过 `params` 传参，禁止直接拼入 SQL 字符串
 4. **禁止 DDL/DML**：仅允许 SELECT，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE
 
 ### 方言限制
-- 数据库：MySQL 8.0
-- 字符串用单引号，双引号视为标识符
-- DATE 函数：`DATE(created_at)`、`DATE_SUB(NOW(), INTERVAL 30 DAY)`
-- 聚合函数：COUNT、SUM、AVG、MAX、MIN，禁止窗口函数嵌套子查询超过 2 层
-- JSON 字段访问：`dimensions->>'$.region'`
+- 数据库：SQL Server（T-SQL）
+- 字符串用单引号，方括号包裹标识符（如 `[dbo].[DWD_InventSum_DH]`）
+- 限制行数用 `SELECT TOP N` 或 `OFFSET ... FETCH NEXT`
+- 日期函数：`CONVERT(DATE, GETDATE())`、`DATEADD(DAY, -30, GETDATE())`
+- 聚合函数：COUNT、SUM、AVG、MAX、MIN，禁止子查询嵌套超过 2 层
+- 字符串拼接用 `CONCAT()` 或 `+`，模糊匹配用 `LIKE '%xxx%'`
 
 ### 命名约定
-- 别名使用 snake_case
-- JOIN 时用表别名：`o` for orders, `c` for customers, `m` for metrics
+- 别名使用 PascalCase（与表字段风格一致）
+- 别名取表名首字母缩写，如 `isd` for `DWD_InventSum_DH`
 
 ### SQL 生成示例
 
 ```sql
--- ✅ 正确：查询某客户近30天订单
-SELECT o.id, o.amount, o.status, o.created_at
-FROM orders o
-WHERE o.customer_id = :customer_id
-  AND o.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-ORDER BY o.created_at DESC
-LIMIT 100 OFFSET 0
+-- ✅ 正确：查询某物料在某仓库的库存（近30天）
+SELECT TOP 100
+  isd.TransDate, isd.ItemId, isd.ProductName,
+  isd.InventLocationId, isd.PhysicalInvent, isd.AvailPhysical,
+  isd.SumValue
+FROM dbo.DWD_InventSum_DH isd
+WHERE isd.ItemId = %(item_id)s
+  AND isd.TransDate >= DATEADD(DAY, -30, GETDATE())
+  AND isd.DW_IsDeleted = 0
+ORDER BY isd.TransDate DESC
 
--- ✅ 正确：各区域销售额趋势
+-- ✅ 正确：各仓库库存汇总
 SELECT
-  m.dimensions->>'$.region' AS region,
-  DATE(m.timestamp) AS report_date,
-  SUM(m.value) AS total_sales
-FROM metrics m
-WHERE m.name = 'sales_trend'
-  AND m.timestamp >= :start_time
-GROUP BY region, report_date
-ORDER BY report_date DESC
+  isd.InventLocationId AS LocationId,
+  SUM(isd.PhysicalInvent) AS TotalQty,
+  SUM(isd.SumValue) AS TotalValue
+FROM dbo.DWD_InventSum_DH isd
+WHERE isd.TransDate >= %(start_date)s
+  AND isd.DW_IsDeleted = 0
+GROUP BY isd.InventLocationId
+ORDER BY TotalValue DESC
 
 -- ❌ 错误：全表扫描，无 WHERE 条件
-SELECT * FROM orders
+SELECT * FROM dbo.DWD_InventSum_DH
 ```
 
 ## 结果解读规则
 
 Hermes 获得查询结果后，按以下规则翻译为业务语言呈现给用户：
 
-### 订单状态
-| status 值 | 含义 | 提示 |
-|-----------|------|------|
-| pending | 待处理 | 超过 3 天的 pending 订单建议提醒 |
-| shipped | 已发货 | - |
-| cancelled | 已取消 | - |
-| refunded | 已退款 | - |
+### 库存状态
+| 字段 | 解读规则 |
+|------|---------|
+| DW_IsDeleted = 1 | 已逻辑删除的数据，必须在 WHERE 中过滤 `DW_IsDeleted = 0` |
+| AvailPhysical <= 0 | ⚠️ 可用库存为零或负，需关注补货 |
+| PhysicalInvent vs AvailPhysical | PhysicalInvent - AvailPhysical = 已预留量 |
+| OnOrder > 0 | 有在途采购/调拨，提示预计到货 |
 
 ### 金额预警
-- amount > 100,000 → 🔴 特大额订单，重点关注
-- amount 10,000 ~ 100,000 → 🟡 大额订单，标记关注
-- amount < 100 → 小额订单
+- SumValue > 1,000,000 → 🔴 高额库存，关注周转
+- SumValue < 0 → 异常负数，需排查数据
+- PhysicalValue 与 PostedValue 差异过大 → 可能存在未过账交易
 
-### 指标趋势
-- 连续 3 个数据点 value 下降 → ⚠️ 下降趋势告警
-- 单日 value 较前日下降 > 50% → 🔴 异常下降，需排查
-- 单日 value 较前日上升 > 100% → 需确认是否为业务活动导致
+### 部门归属
+- Trx_Belong、Trx_Dept 为空字符串为正常（未启用维度），不视为异常
+- DataAreaId 为必填字段，用于区分不同公司账套
 
 ### 敏感数据脱敏
-返回结果前必须处理：
-- `contact_phone`：中间 4 位替换为 `****`，如 `138****5678`
-- 其他字段若用户未明确要求详情，默认只展示摘要统计
+- 目前表中无个人敏感字段（无手机号、身份证等）
+- 若涉及具体客户/供应商名称的扩展表，需评估脱敏策略
 
 ## 典型工作流
 
 ```
-用户: "查一下张三最近的订单情况"
+用户: "查一下 nx 公司最近30天物料 0022AS000650 的库存情况"
 
 Hermes 规划:
-  1. 识别意图 → data_query（客户订单查询）
-  2. 加载 data_platform_search Skill → 获取表结构和工具信息
+  1. 识别意图 → data_query（库存查询）
+  2. 加载 data-platform-search Skill → 获取表结构和工具信息
   3. 生成 SQL:
-     SELECT c.id, c.name, o.id, o.amount, o.status, o.created_at
-     FROM customers c JOIN orders o ON c.id = o.customer_id
-     WHERE c.name LIKE CONCAT('%', :name, '%')
-       AND o.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-     ORDER BY o.created_at DESC
-     LIMIT 50
-  4. 调用 mcp_data-platform_query({sql: "...", params: {name: "张三"}})
-  5. 解析结果 → 脱敏 → 格式化输出给用户
+     SELECT TOP 50
+       isd.TransDate, isd.ItemId, isd.ProductName,
+       isd.InventLocationId, isd.PhysicalInvent, isd.AvailPhysical,
+       isd.SumValue
+     FROM dbo.DWD_InventSum_DH isd
+     WHERE isd.DataAreaId = %(data_area_id)s
+       AND isd.ItemId = %(item_id)s
+       AND isd.TransDate >= DATEADD(DAY, -30, GETDATE())
+       AND isd.DW_IsDeleted = 0
+     ORDER BY isd.TransDate DESC
+  4. 调用 mcp_data-platform (query) 执行 SQL
+  5. 解析结果 → 解读库存状态 → 格式化输出
 ```
 
 ## 错误处理
