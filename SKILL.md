@@ -95,7 +95,9 @@ Hermes 生成 SQL 时必须遵守以下规则：
 
 ### 安全规则（强制）
 1. **禁止全表扫描**：WHERE 子句必须包含索引字段（TransDate、ItemId、InventLocationId、DataAreaId）
-2. **必须分页**：预期行数 > 200 时，必须用 `OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`
+2. **必须分页**：预期行数 > 200 时，必须分页。TOP 和 OFFSET 只能二选一，禁止同时使用：
+   - 无需翻页 → `SELECT TOP N ...`
+   - 需要翻页 → `OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`（不带 TOP）
 3. **参数绑定**：用户输入值必须通过 `params` 传参，禁止直接拼入 SQL 字符串
 4. **禁止 DDL/DML**：仅允许 SELECT，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE
 
