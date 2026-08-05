@@ -1,15 +1,14 @@
 ---
 name: data-platform-search
 description: >
-  数据中台查询技能。当用户意图为数据库查询（订单、客户、指标等业务数据）时，
-  Hermes 加载此技能获取表结构、MCP 工具映射和 SQL 生成规范，
+  数据中台查询技能。当用户意图为数据库查询（订单、客户、指标等业务数据）时，Hermes 加载此技能获取表结构、MCP 工具映射和 SQL 生成规范，
   自行生成 SQL 后通过 MCP Server 执行查询，解析结果并输出。
 version: 1.0.0
 metadata:
   hermes:
-    tags: [Data, Business, Query, SQL]
+    tags: [Data, Business, Query, SQL, Inventory]
     related_skills: [data-visualization, business-report]
-    trigger_intents: [data_query, order_lookup, customer_lookup, metrics_query, sales_trend]
+    trigger_intents: [data_query, inventory_query, stock_check, stock_analysis]
 ---
 
 # Data Platform Search
